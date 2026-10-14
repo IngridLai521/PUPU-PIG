@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>小豬閃大便！</title>
+<style>
+  :root { color-scheme: light; --pink:#ff8fb3; --deep:#513b50; --cream:#fff8ec; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:18px;
+    font-family: ui-rounded, "Arial Rounded MT Bold", system-ui, sans-serif;
+    color:var(--deep); background:radial-gradient(circle at 20% 15%,#fff 0,#fff3f7 36%,#f6eaff 100%); }
+  .game-shell { width:min(100%,720px); }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  h1 { margin:0; font-size:clamp(1.35rem,4vw,2rem); letter-spacing:.02em; }
+  .subtitle { margin:4px 0 0; color:#856f83; font-size:.92rem; }
+  .stats { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .stat { background:#fff; border:2px solid #f5d8e4; border-radius:14px; padding:8px 12px; min-width:88px; text-align:center; box-shadow:0 3px 0 #efd3e0; }
+  .stat small { display:block; color:#927d90; font-size:.72rem; font-weight:700; }
+  .stat strong { font-size:1.25rem; }
+  .stage { position:relative; overflow:hidden; border:4px solid #fff; border-radius:24px; box-shadow:0 12px 35px #9d76a42b; background:#dff7ff; }
+  canvas { display:block; width:100%; height:auto; aspect-ratio: 3 / 2; touch-action:none; }
+  .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:20px;
+    background:linear-gradient(#ffffffa8,#fff8f0c9); }
+  .panel { width:min(100%,340px); text-align:center; padding:24px 22px; border:3px solid white; border-radius:24px;
+    background:#fffaf5f2; box-shadow:0 8px 0 #efcedc,0 16px 35px #66456522; }
+  .pig-icon { font-size:3.4rem; line-height:1.2; }
+  .panel h2 { margin:8px 0; font-size:1.6rem; }
+  .panel p { margin:8px 0 18px; line-height:1.6; color:#806b7d; }
+  button { border:0; border-radius:999px; padding:13px 28px; font:inherit; font-weight:900; font-size:1rem;
+    color:white; background:#ff6f9e; box-shadow:0 5px 0 #dc4e80; cursor:pointer; transition:transform .12s,filter .12s; }
+  button:hover { filter:brightness(1.04); transform:translateY(-1px); }
+  button:active { transform:translateY(3px); box-shadow:0 2px 0 #dc4e80; }
+  .instructions { text-align:center; color:#806f84; font-size:.9rem; margin:13px 0 0; }
+  .key { display:inline-block; border:1px solid #e6d5e6; border-bottom-width:3px; border-radius:6px; background:white; padding:1px 7px; color:#65506a; font-weight:800; }
+  .mobile-controls { display:none; justify-content:center; gap:18px; margin-top:12px; }
+  .mobile-controls button { width:68px; height:52px; padding:0; font-size:1.35rem; }
+  @media(max-width:520px) {
+    body { padding:10px; align-items:start; }
+    header { align-items:flex-start; flex-direction:column; }
+    .stats { justify-content:flex-start; width:100%; }
+    .stat { flex:1; }
+    .mobile-controls { display:flex; }
+    .instructions { font-size:.82rem; }
+  }
+</style>
+</head>
+<body>
+<main class="game-shell">
+  <header>
+    <div><h1>🐷 小豬閃大便！</h1><p class="subtitle">閃得越久，分數越高！</p></div>
+    <div class="stats" aria-live="polite">
+      <div class="stat"><small>目前分數</small><strong id="score">10</strong></div>
+      <div class="stat"><small>剩餘時間</small><strong><span id="time">100</span>s</strong></div>
+    </div>
+  </header>
+  <div class="stage">
+    <canvas id="game" width="900" height="600" aria-label="躲避大便遊戲畫布"></canvas>
+    <div class="overlay" id="overlay">
+      <section class="panel">
+        <div class="pig-icon" id="panelIcon">🐷</div>
+        <h2 id="panelTitle">準備好閃躲了嗎？</h2>
+        <p id="panelText">用左右方向鍵移動小豬，躲開天上掉下來的大便！<br>每碰到一個就扣 1 分。</p>
+        <button id="startBtn">START 開始遊戲</button>
+      </section>
+    </div>
+  </div>
+  <div class="mobile-controls" aria-label="觸控控制">
+    <button id="leftBtn" aria-label="向左">◀</button><button id="rightBtn" aria-label="向右">▶</button>
+  </div>
+  <p class="instructions">操作：<span class="key">←</span> <span class="key">→</span> 左右移動　·　分數降到 0 或時間歸零就結束！</p>
+</main>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('overlay');
+  const scoreEl = document.getElementById('score');
+  const timeEl = document.getElementById('time');
+  const startBtn = document.getElementById('startBtn');
+  const W = canvas.width, H = canvas.height;
+  let state = 'ready', score = 10, remaining = 100, last = 0, spawn = 0, poop = [];
+  let left = false, right = false, elapsed = 0;
+  const pig = { x: W/2, y: H-76, r: 35, speed: 430 };
+
+  function drawBackground() {
+    const sky = ctx.createLinearGradient(0,0,0,H);
+    sky.addColorStop(0,'#c9f2ff'); sky.addColorStop(1,'#fff2f8');
+    ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
+    // Soft clouds
+    for (const [x,y,s] of [[110,95,1],[380,155,.7],[710,80,.9],[790,260,.6],[230,300,.55]]) {
+      ctx.fillStyle = '#ffffffb8';
+      ctx.beginPath(); ctx.arc(x,y,25*s,0,Math.PI*2); ctx.arc(x+27*s,y-12*s,31*s,0,Math.PI*2);
+      ctx.arc(x+58*s,y,23*s,0,Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle = '#b9e8a7'; ctx.beginPath(); ctx.ellipse(W/2,H+22,W*.72,70,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#a6dc91'; ctx.fillRect(0,H-16,W,16);
+    // tiny flowers
+    for (const x of [50,145,270,620,770,850]) {
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(x,H-26,5,0,Math.PI*2); ctx.arc(x+8,H-31,5,0,Math.PI*2); ctx.arc(x+14,H-25,5,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#ffd45c'; ctx.beginPath(); ctx.arc(x+7,H-27,4,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  function drawPig() {
+    ctx.save(); ctx.translate(pig.x,pig.y);
+    // shadow
+    ctx.fillStyle='#7b647533'; ctx.beginPath(); ctx.ellipse(0,34,42,9,0,0,Math.PI*2); ctx.fill();
+    // ears
+    ctx.fillStyle='#ff9fbd';
+    ctx.beginPath(); ctx.ellipse(-22,-27,12,20,-.45,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(22,-27,12,20,.45,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ffcad9';
+    ctx.beginPath(); ctx.ellipse(-22,-28,5,11,-.45,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(22,-28,5,11,.45,0,Math.PI*2); ctx.fill();
+    // round pig body/head
+    ctx.fillStyle='#ff9fbd'; ctx.beginPath(); ctx.arc(0,0,pig.r,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#f47ea3'; ctx.lineWidth=3; ctx.stroke();
+    // eyes
+    ctx.fillStyle='#54394d'; ctx.beginPath(); ctx.arc(-12,-8,3.8,0,Math.PI*2); ctx.arc(12,-8,3.8,0,Math.PI*2); ctx.fill();
+    // snout
+    ctx.fillStyle='#ff6f9e'; ctx.beginPath(); ctx.ellipse(0,8,15,11,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#a73e68'; ctx.beginPath(); ctx.ellipse(-5,8,2.6,4,0,0,Math.PI*2); ctx.ellipse(5,8,2.6,4,0,0,Math.PI*2); ctx.fill();
+    // smile
+    ctx.strokeStyle='#9b4b69'; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(0,14,7,.25,Math.PI-.25); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPoop(p) {
+    ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot || 0);
+    ctx.fillStyle='#75452f'; ctx.strokeStyle='#5d3428'; ctx.lineWidth=2.5;
+    ctx.beginPath();
+    ctx.moveTo(-p.r*.68,p.r*.72);
+    ctx.bezierCurveTo(-p.r*1.05,p.r*.25,-p.r*.7,-p.r*.08,-p.r*.38,-p.r*.05);
+    ctx.bezierCurveTo(-p.r*.48,-p.r*.48,p.r*.1,-p.r*.63,p.r*.16,-p.r*.22);
+    ctx.bezierCurveTo(p.r*.4,-p.r*.58,p.r*.72,-p.r*.3,p.r*.52,p.r*.05);
+    ctx.bezierCurveTo(p.r*1.05,p.r*.32,p.r*.75,p.r*.73,p.r*.5,p.r*.75);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#9b6746'; ctx.beginPath(); ctx.ellipse(-p.r*.3,p.r*.35,p.r*.18,p.r*.09,-.4,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  function render() {
+    drawBackground();
+    poop.forEach(drawPoop);
+    drawPig();
+    if (state === 'ready') {
+      ctx.fillStyle='#6b7e92'; ctx.font='bold 22px system-ui'; ctx.textAlign='center';
+      ctx.fillText('左右移動，閃開大便！',W/2,48);
+    }
+  }
+
+  function reset() {
+    score = 10; remaining = 100; elapsed = 0; spawn = 0; poop = [];
+    pig.x = W/2; left = right = false;
+    scoreEl.textContent = score; timeEl.textContent = remaining;
+  }
+  function finish(message) {
+    state = 'over';
+    overlay.style.display = 'flex';
+    document.getElementById('panelIcon').textContent = score > 0 ? '🏆' : '💩';
+    document.getElementById('panelTitle').textContent = message;
+    document.getElementById('panelText').innerHTML = `最終分數：<b>${score}</b><br>再玩一次，挑戰更高分！`;
+    startBtn.textContent = '再玩一次 ↻';
+  }
+  function start() {
+    reset(); state = 'playing'; last = performance.now();
+    overlay.style.display = 'none';
+    requestAnimationFrame(loop);
+  }
+  function loop(now) {
+    if (state !== 'playing') return;
+    const dt = Math.min((now-last)/1000,.04); last = now;
+    elapsed += dt; remaining = Math.max(0,100-elapsed);
+    // Spawn faster gradually, but keep a readable dodge window.
+    spawn += dt;
+    const interval = Math.max(.34,.88-elapsed*.004);
+    while (spawn >= interval) {
+      spawn -= interval;
+      const r = 17 + Math.random()*10;
+      poop.push({x:35+r+Math.random()*(W-2*(35+r)),y:-r,r,speed:190+Math.random()*100+elapsed*1.05,rot:(Math.random()-.5)*.3});
+    }
+    if (left) pig.x -= pig.speed*dt;
+    if (right) pig.x += pig.speed*dt;
+    pig.x = Math.max(pig.r+8,Math.min(W-pig.r-8,pig.x));
+    for (let i=poop.length-1;i>=0;i--) {
+      const p = poop[i]; p.y += p.speed*dt; p.rot += dt*.3;
+      const dx=p.x-pig.x, dy=p.y-pig.y;
+      if (dx*dx+dy*dy < (p.r*.72+pig.r*.78)**2) {
+        poop.splice(i,1); score=Math.max(0,score-1); scoreEl.textContent=score;
+        if (score===0) { render(); finish('哎呀！分數歸零了'); return; }
+      } else if (p.y > H+p.r) poop.splice(i,1);
+    }
+    timeEl.textContent = Math.ceil(remaining);
+    render();
+    if (remaining <= 0) { finish('時間到！你成功撐住了'); return; }
+    requestAnimationFrame(loop);
+  }
+  startBtn.addEventListener('click',start);
+  document.addEventListener('keydown',e=>{
+    if (['ArrowLeft','ArrowRight','a','A','d','D'].includes(e.key)) e.preventDefault();
+    if (e.key==='ArrowLeft'||e.key==='a'||e.key==='A') left=true;
+    if (e.key==='ArrowRight'||e.key==='d'||e.key==='D') right=true;
+    if ((e.key==='Enter'||e.key===' ') && state!=='playing') { e.preventDefault(); start(); }
+  });
+  document.addEventListener('keyup',e=>{
+    if (e.key==='ArrowLeft'||e.key==='a'||e.key==='A') left=false;
+    if (e.key==='ArrowRight'||e.key==='d'||e.key==='D') right=false;
+  });
+  window.addEventListener('blur',()=>{left=right=false;});
+  function hold(button,dir) {
+    const down=e=>{e.preventDefault(); if(dir==='left')left=true;else right=true;};
+    const up=e=>{e.preventDefault(); if(dir==='left')left=false;else right=false;};
+    button.addEventListener('pointerdown',down);
+    ['pointerup','pointercancel','pointerleave'].forEach(ev=>button.addEventListener(ev,up));
+  }
+  hold(document.getElementById('leftBtn'),'left'); hold(document.getElementById('rightBtn'),'right');
+  render();
+})();
+</script>
+</body>
+</html>
